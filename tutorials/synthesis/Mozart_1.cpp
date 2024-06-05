@@ -1,21 +1,9 @@
-﻿// Copied from 08_SubSyn.cpp
-
-#include <cstdio>  // for printing to stdout
-
-#include <vector>
-#include <random>
-#include <iostream>
-#include <map>
+﻿#include <cstdio>  // for printing to stdout
 
 #include "Gamma/Analysis.h"
 #include "Gamma/Effects.h"
 #include "Gamma/Envelope.h"
-#include "Gamma/Gamma.h"
 #include "Gamma/Oscillator.h"
-#include "Gamma/Types.h"
-#include "Gamma/Spatial.h"
-#include "Gamma/SamplePlayer.h"
-#include "Gamma/DFT.h"
 
 #include "al/app/al_App.hpp"
 #include "al/graphics/al_Shapes.hpp"
@@ -24,13 +12,8 @@
 #include "al/ui/al_ControlGUI.hpp"
 #include "al/ui/al_Parameter.hpp"
 
-#include "al/app/al_App.hpp"
-#include "al/io/al_Imgui.hpp"
-
-using namespace gam;
-using namespace al;
-using namespace std;
-#define FFT_SIZE 4048
+#include "al/graphics/al_Shapes.hpp"
+#include "al/graphics/al_Font.hpp"
 
 // using namespace gam;
 using namespace al;
@@ -40,7 +23,8 @@ using namespace al;
 // define the synth's voice parameters and the sound and graphic generation
 // processes in the onProcess() functions.
 
-class MelodySpect : public SynthVoice {
+
+class SineEnv : public SynthVoice {
  public:
   // Unit generators
   gam::Pan<> mPan;
@@ -49,12 +33,7 @@ class MelodySpect : public SynthVoice {
   // envelope follower to connect audio output to graphics
   gam::EnvFollow<> mEnvFollow;
 
-  gam::STFT stft = gam::STFT(FFT_SIZE, FFT_SIZE/4, 0, gam::HANN, gam::MAG_FREQ);
-
-  Mesh mMelodySpect;
-  vector<float> spectrum;
   Mesh mMesh;
-
 
   // Initialize voice. This function will only be called once per voice when
   // it is created. Voices will be reused if they are idle.
@@ -64,15 +43,10 @@ class MelodySpect : public SynthVoice {
     mAmpEnv.levels(0, 1, 1, 0);
     mAmpEnv.sustainPoint(2);  // Make point 2 sustain until a release is issued
 
-    //addRect(mMesh, 1, 1, 0.5, 0.5);
-
-    // Declare the size of the spectrum
-    spectrum.resize(FFT_SIZE);
-    mMelodySpect.primitive(Mesh::LINE_LOOP);
-    // mMelodySpect.primitive(Mesh::POINTS);
+    addRect(mMesh, 1, 1, 0.5, 0.5);
 
     // We have the mesh be a sphere
-    addDisc(mMesh, 1.0, 30);
+    //addDisc(mMesh, 1.0, 30);
 
 
     // This is a quick way to create parameters for the voice. Trigger
@@ -86,7 +60,7 @@ class MelodySpect : public SynthVoice {
     createInternalTriggerParameter("attackTime", 1.0, 0.01, 3.0);
     createInternalTriggerParameter("releaseTime", 3.0, 0.1, 10.0);
     createInternalTriggerParameter("pan", 0.0, -1.0, 1.0);
-    // createInternalTriggerParameter("Speed", )
+    //createInternalTriggerParameter("SPEED", 0.0, -1.0, 1.0);
     
   }
 
@@ -98,30 +72,26 @@ class MelodySpect : public SynthVoice {
     // voice, rather than having to trigger a new voice to hear the changes.
     // Parameters will update values once per audio callback because they
     // are outside the sample processing loop.
-    float f = getInternalParameterValue("frequency");
-    mOsc.freq(f);
+    mOsc.freq(getInternalParameterValue("frequency"));
     mAmpEnv.lengths()[0] = getInternalParameterValue("attackTime");
     mAmpEnv.lengths()[2] = getInternalParameterValue("releaseTime");
     mPan.pos(getInternalParameterValue("pan"));
-    while(io()){
+    while (io()) {
       float s1 = mOsc() * mAmpEnv() * getInternalParameterValue("amplitude");
       float s2;
-      mPan(s1, s1, s2);
       mEnvFollow(s1);
+      mPan(s1, s1, s2);
       io.out(0) += s1;
       io.out(1) += s2;
-
-      if(stft(s1)){
-        // loop through all frequency bins and scale the complex sample
-        for(unsigned k = 0; k < stft.numBins(); ++k){
-          spectrum[k] = tanh(pow(stft.bin(k).real(), 1.3));
-        }
-      }
     }
     // We need to let the synth know that this voice is done
     // by calling the free(). This takes the voice out of the
     // rendering chain
-    if(mAmpEnv.done()) free();
+    if (mAmpEnv.done() && (mEnvFollow.value() < 0.001f)) free();
+
+
+    ///////
+    
 
   }
 
@@ -131,28 +101,29 @@ class MelodySpect : public SynthVoice {
   // The graphics processing function
   void onProcess(Graphics& g) override {
 
+    // Get the paramter values on every video frame, to apply changes to the
+    // current instance
     float frequency = getInternalParameterValue("frequency");
     float amplitude = getInternalParameterValue("amplitude");
 
-    mMelodySpect.reset();
+    float hue = (frequency - 200) / 1000;
+    float sat = amplitude;
+    float val = 0.9;
 
-    for(int i = 0; i < FFT_SIZE / 90; i++){
-      mMelodySpect.color(HSV(frequency/500 - spectrum[i] * 50));
-      mMelodySpect.vertex(i, spectrum[i], 0.0);
-    }
+    // Now draw
+    g.pushMatrix();
+    // Move x according to frequency, y according to amplitude
+    g.translate(frequency / 200 - 3, amplitude, -8);
+    // Scale in the x and y directions according to amplitude
+    g.scale(amplitude, 1-amplitude, 1);
+    // Set the color. Red and Blue according to sound amplitude and Green
+    // according to frequency. Alpha fixed to 0.4
+    // g.color(mEnvFollow.value(), frequency / 1000, mEnvFollow.value() * 10, 0.4);
+  
+    g.color(Color(HSV(hue, sat, val), mEnvFollow.value() * 30));
+    g.draw(mMesh);
+    g.popMatrix();
 
-    for(int i = 0; i <= 0; i++) {
-      g.meshColor();
-      g.pushMatrix();
-      // g.translate(-0.5f, 1, -10);
-      // g.translate(cos(static_cast<double>(frequency)), sin(static_cast<double>(frequency)), -4);
-      g.translate(i, -2.7, -10);
-      g.scale(50.0/FFT_SIZE, 250, 1.0);
-      // g.pointSize(1 + 5 * mEnvFollow.value() * 10);
-      g.lineWidth(1 + 5 * mEnvFollow.value() * 100);
-      g.draw(mMelodySpect);
-      g.popMatrix();
-    }
     ///////
 
     
@@ -209,18 +180,18 @@ class MyApp : public App {
   // GUI manager for SineEnv voices
   // The name provided determines the name of the directory
   // where the presets and sequences are stored
-  SynthGUIManager<MelodySpect> synthManager{"MelodySpect"};
+  SynthGUIManager<SineEnv> synthManager{"SineEnv_Piano"};
   
   // Mesh and variables for drawing piano keys
   // Mesh meshKey;
 
-  //float fontSize;
+  float fontSize;
   // Font renderder
-  //FontRenderer fontRender;
+  FontRenderer fontRender;
 
   // This function is called right after the window is created
   // It provides a grphics context to initialize ParameterGUI
-  // It's also a good place to put things that shouƒld
+  // It's also a good place to put things that should
   // happen once at startup.
   void onCreate() override {
     navControl().active(false);  // Disable navigation via keyboard, since we
@@ -322,7 +293,6 @@ int main() {
   
   // Set up audio
   app.configureAudio(48000., 512, 2, 0);
-  
   app.start();
   return 0;
 }
